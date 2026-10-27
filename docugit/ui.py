@@ -109,28 +109,35 @@ class DocuGitApp:
         style.configure("Horizontal.TProgressbar", troughcolor=PALETTE["raised"])
 
     def _build_layout(self) -> None:
-        shell = ttk.Frame(self.root, style="App.TFrame", padding=16)
-        shell.pack(fill="both", expand=True)
-        shell.columnconfigure(1, weight=1)
-        shell.rowconfigure(0, weight=1)
-
-        self.sidebar = ttk.Frame(shell, style="Panel.TFrame", padding=(16, 18))
-        self.sidebar.grid(row=0, column=0, sticky="nsew", padx=(0, 14))
+        # Outer horizontal paned window: sidebar | main
+        self.outer_pane = tk.PanedWindow(self.root, orient="horizontal", sashwidth=7, bg=PALETTE["border"], bd=0, sashrelief="flat")
+        self.outer_pane.pack(fill="both", expand=True)
+        # Sidebar
+        self.sidebar = ttk.Frame(self.outer_pane, style="Panel.TFrame", padding=(16, 18))
         self.sidebar.configure(width=286)
         self.sidebar.grid_propagate(False)
         self._build_sidebar()
-
-        self.content = ttk.Frame(shell, style="App.TFrame")
-        self.content.grid(row=0, column=1, sticky="nsew")
-        self.content.columnconfigure(0, weight=1)
-        self.content.rowconfigure(2, weight=1)
+        self.outer_pane.add(self.sidebar, minsize=220)
+        # Main vertical pane: header+commit | viewer | history
+        self.main_pane = tk.PanedWindow(self.outer_pane, orient="vertical", sashwidth=7, bg=PALETTE["border"], bd=0, sashrelief="flat")
+        self.outer_pane.add(self.main_pane, minsize=600)
+        # Header + commit bar (fixed)
+        self.header_commit = ttk.Frame(self.main_pane, style="App.TFrame")
+        self.header_commit.columnconfigure(0, weight=1)
         self._build_header()
         self._build_commit_bar()
+        self.main_pane.add(self.header_commit, minsize=80, height=110)
+        # Viewer/editor/diff area (resizable)
+        self.viewer_frame = ttk.Frame(self.main_pane, style="App.TFrame")
         self._build_viewer()
+        self.main_pane.add(self.viewer_frame, minsize=200)
+        # History (resizable)
+        self.history_frame = ttk.Frame(self.main_pane, style="App.TFrame")
         self._build_history()
-
-        footer = ttk.Frame(shell, style="App.TFrame")
-        footer.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        self.main_pane.add(self.history_frame, minsize=80, height=180)
+        # Footer
+        footer = ttk.Frame(self.root, style="App.TFrame")
+        footer.pack(fill="x", side="bottom", pady=(0, 0))
         self.status_var = tk.StringVar(value="Ready")
         ttk.Label(footer, textvariable=self.status_var, style="Muted.TLabel").pack(side="left")
         ttk.Label(
@@ -193,7 +200,7 @@ class DocuGitApp:
         ).pack(anchor="w", pady=(15, 0))
 
     def _build_header(self) -> None:
-        header = ttk.Frame(self.content, style="App.TFrame")
+        header = ttk.Frame(self.header_commit, style="App.TFrame")
         header.grid(row=0, column=0, sticky="ew", pady=(1, 16))
         header.columnconfigure(0, weight=1)
         title_stack = ttk.Frame(header, style="App.TFrame")
@@ -211,7 +218,7 @@ class DocuGitApp:
         self.open_button.state(["disabled"])
 
     def _build_commit_bar(self) -> None:
-        bar = ttk.Frame(self.content, style="Panel.TFrame", padding=(14, 12))
+        bar = ttk.Frame(self.header_commit, style="Panel.TFrame", padding=(14, 12))
         bar.grid(row=1, column=0, sticky="ew", pady=(0, 14))
         bar.columnconfigure(1, weight=1)
         ttk.Label(bar, text="COMMIT TITLE", style="PanelMuted.TLabel").grid(
@@ -242,24 +249,106 @@ class DocuGitApp:
         self.publish_button.state(["disabled"])
 
     def _build_viewer(self) -> None:
-        viewer = ttk.Frame(self.content, style="Panel.TFrame", padding=1)
-        viewer.grid(row=2, column=0, sticky="nsew", pady=(0, 14))
-        viewer.rowconfigure(0, weight=1)
-        viewer.columnconfigure(0, weight=1)
-        self.tabs = ttk.Notebook(viewer)
-        self.tabs.grid(row=0, column=0, sticky="nsew")
+        self.tabs = ttk.Notebook(self.viewer_frame)
+        self.tabs.pack(fill="both", expand=True)
         self.preview_tab = ttk.Frame(self.tabs, style="Panel.TFrame")
         self.diff_tab = ttk.Frame(self.tabs, style="Panel.TFrame")
         self.edit_tab = ttk.Frame(self.tabs, style="Panel.TFrame")
         self.tabs.add(self.preview_tab, text="  Preview  ")
-        self.tabs.add(self.diff_tab, text="  Difference  ")
+        self.tabs.add(self.diff_tab, text="  Diff  ")
         self.tabs.add(self.edit_tab, text="  Edit  ")
         self.preview_caption = tk.StringVar(value="DOCUMENT PREVIEW")
         self._make_text_view(self.preview_tab, self.preview_caption)
         self.diff_caption = tk.StringVar(value="SELECT VERSIONS TO COMPARE")
-        self._make_text_view(self.diff_tab, self.diff_caption, is_diff=True)
+        self._make_side_by_side_diff_view(self.diff_tab, self.diff_caption)
         self._make_editor_view()
         self._set_text(self.preview_text, "Add a DOCX or XLSX file to see its contents here.")
+
+    def _make_side_by_side_diff_view(self, parent: ttk.Frame, caption_var: tk.StringVar) -> None:
+        parent.rowconfigure(1, weight=1)
+        parent.columnconfigure(0, weight=1)
+        caption = tk.Label(
+            parent, textvariable=caption_var, bg=PALETTE["panel"], fg=PALETTE["muted"],
+            font=("Aptos", 9, "bold"), anchor="w", padx=15, pady=12,
+        )
+        caption.grid(row=0, column=0, sticky="ew", columnspan=2)
+        diff_pane = tk.PanedWindow(parent, orient="horizontal", sashwidth=5, bg=PALETTE["border"], bd=0, sashrelief="flat")
+        diff_pane.grid(row=1, column=0, sticky="nsew")
+        self.diff_scrollbar = ttk.Scrollbar(parent, orient="vertical", command=self._scroll_diff)
+        self.diff_scrollbar.grid(row=1, column=1, sticky="ns")
+        # Left: old version
+        left_frame = ttk.Frame(diff_pane, style="Panel.TFrame")
+        right_frame = ttk.Frame(diff_pane, style="Panel.TFrame")
+        diff_pane.add(left_frame, minsize=200)
+        diff_pane.add(right_frame, minsize=200)
+        left_label = tk.Label(left_frame, text="← Old Version", bg=PALETTE["panel"], fg=PALETTE["muted"], font=("Aptos", 9, "bold"), anchor="w", padx=10, pady=2)
+        left_label.pack(fill="x")
+        right_label = tk.Label(right_frame, text="New Version →", bg=PALETTE["panel"], fg=PALETTE["muted"], font=("Aptos", 9, "bold"), anchor="e", padx=10, pady=2)
+        right_label.pack(fill="x")
+        left_body = ttk.Frame(left_frame, style="Panel.TFrame")
+        right_body = ttk.Frame(right_frame, style="Panel.TFrame")
+        left_body.pack(fill="both", expand=True)
+        right_body.pack(fill="both", expand=True)
+        for body in (left_body, right_body):
+            body.rowconfigure(0, weight=1)
+            body.columnconfigure(0, weight=1)
+        self.diff_left_text = tk.Text(left_frame, wrap="none", bg=PALETTE["panel"], fg=PALETTE["text"],
+            insertbackground=PALETTE["accent"], selectbackground="#35473e",
+            relief="flat", borderwidth=0, padx=0, pady=8,
+            font=("Cascadia Mono", 10), state="disabled", width=1)
+        self.diff_right_text = tk.Text(right_frame, wrap="none", bg=PALETTE["panel"], fg=PALETTE["text"],
+            insertbackground=PALETTE["accent"], selectbackground="#35473e",
+            relief="flat", borderwidth=0, padx=0, pady=8,
+            font=("Cascadia Mono", 10), state="disabled", width=1)
+        self.diff_left_text.configure(yscrollcommand=lambda first, last: self._diff_scrolled("left", first, last))
+        self.diff_right_text.configure(yscrollcommand=lambda first, last: self._diff_scrolled("right", first, last))
+        self.diff_left_text.grid(in_=left_body, row=0, column=0, sticky="nsew")
+        self.diff_right_text.grid(in_=right_body, row=0, column=0, sticky="nsew")
+        left_xscroll = ttk.Scrollbar(left_body, orient="horizontal", command=self.diff_left_text.xview)
+        right_xscroll = ttk.Scrollbar(right_body, orient="horizontal", command=self.diff_right_text.xview)
+        left_xscroll.grid(row=1, column=0, sticky="ew")
+        right_xscroll.grid(row=1, column=0, sticky="ew")
+        self.diff_left_text.configure(xscrollcommand=left_xscroll.set)
+        self.diff_right_text.configure(xscrollcommand=right_xscroll.set)
+        for text in (self.diff_left_text, self.diff_right_text):
+            text.bind("<MouseWheel>", self._diff_mousewheel)
+            text.bind("<Button-4>", lambda _event: self._diff_scroll_units(-3))
+            text.bind("<Button-5>", lambda _event: self._diff_scroll_units(3))
+        # Color tags
+        for text in (self.diff_left_text, self.diff_right_text):
+            text.tag_configure("added", background="#1b2b20", foreground="#b7ed9b")
+            text.tag_configure("removed", background="#321f20", foreground="#ffaaa5")
+            text.tag_configure("changed", background="#23303b", foreground="#c2dcf2")
+            text.tag_configure("empty", background=PALETTE["panel"], foreground=PALETTE["muted"])
+            text.tag_configure("line_number", foreground="#718078")
+
+    def _diff_scrolled(self, side: str, first: str, last: str) -> None:
+        self.diff_scrollbar.set(first, last)
+        if getattr(self, "syncing_diff_scroll", False):
+            return
+        self.syncing_diff_scroll = True
+        try:
+            peer = self.diff_right_text if side == "left" else self.diff_left_text
+            peer.yview_moveto(first)
+        finally:
+            self.syncing_diff_scroll = False
+
+    def _scroll_diff(self, *args: str) -> None:
+        self.diff_left_text.yview(*args)
+
+    def _diff_scroll_units(self, units: int) -> str:
+        self.diff_left_text.yview_scroll(units, "units")
+        return "break"
+
+    def _diff_mousewheel(self, event: tk.Event) -> str:
+        delta = int(event.delta)
+        if delta == 0:
+            return "break"
+        units = -3 if delta > 0 else 3
+        if abs(delta) >= 120:
+            units *= max(1, abs(delta) // 120)
+        self._diff_scroll_units(units)
+        return "break"
 
     def _make_text_view(self, parent: ttk.Frame, caption_var: tk.StringVar, is_diff: bool = False) -> None:
         parent.rowconfigure(1, weight=1)
@@ -316,7 +405,7 @@ class DocuGitApp:
         self.editor_text.bind("<<Modified>>", self._mark_editor_dirty)
 
     def _build_history(self) -> None:
-        section = ttk.Frame(self.content, style="App.TFrame")
+        section = ttk.Frame(self.history_frame, style="App.TFrame")
         section.grid(row=3, column=0, sticky="ew")
         section.columnconfigure(0, weight=1)
         heading = ttk.Frame(section, style="App.TFrame")
@@ -509,6 +598,68 @@ class DocuGitApp:
                     widget.tag_add(tag, f"{line_number}.0", f"{line_number}.end")
         widget.configure(state="disabled")
 
+    def _show_side_by_side_diff(self, old_lines, new_lines):
+        import difflib
+        sm = difflib.SequenceMatcher(None, old_lines, new_lines)
+        left_lines, right_lines = [], []
+        left_tags, right_tags = [], []
+        left_numbers, right_numbers = [], []
+        for tag, i1, i2, j1, j2 in sm.get_opcodes():
+            if tag == "equal":
+                for i in range(i2 - i1):
+                    left_lines.append(old_lines[i1 + i])
+                    right_lines.append(new_lines[j1 + i])
+                    left_tags.append(None)
+                    right_tags.append(None)
+                    left_numbers.append(i1 + i + 1)
+                    right_numbers.append(j1 + i + 1)
+            elif tag == "replace":
+                maxlen = max(i2 - i1, j2 - j1)
+                for i in range(maxlen):
+                    l = old_lines[i1 + i] if i1 + i < i2 else ""
+                    r = new_lines[j1 + i] if j1 + i < j2 else ""
+                    left_lines.append(l)
+                    right_lines.append(r)
+                    left_tags.append("changed" if l and r else ("removed" if l else "empty"))
+                    right_tags.append("changed" if l and r else ("added" if r else "empty"))
+                    left_numbers.append(i1 + i + 1 if l else None)
+                    right_numbers.append(j1 + i + 1 if r else None)
+            elif tag == "delete":
+                for i in range(i2 - i1):
+                    left_lines.append(old_lines[i1 + i])
+                    right_lines.append("")
+                    left_tags.append("removed")
+                    right_tags.append("empty")
+                    left_numbers.append(i1 + i + 1)
+                    right_numbers.append(None)
+            elif tag == "insert":
+                for i in range(j2 - j1):
+                    left_lines.append("")
+                    right_lines.append(new_lines[j1 + i])
+                    left_tags.append("empty")
+                    right_tags.append("added")
+                    left_numbers.append(None)
+                    right_numbers.append(j1 + i + 1)
+        # Display
+        self.diff_left_text.configure(state="normal")
+        self.diff_right_text.configure(state="normal")
+        self.diff_left_text.delete("1.0", "end")
+        self.diff_right_text.delete("1.0", "end")
+        for idx, (line, tag, number) in enumerate(zip(left_lines, left_tags, left_numbers), 1):
+            prefix = f"{number:>4} " if number is not None else "     "
+            self.diff_left_text.insert("end", prefix + line + "\n")
+            self.diff_left_text.tag_add("line_number", f"{idx}.0", f"{idx}.5")
+            if tag:
+                self.diff_left_text.tag_add(tag, f"{idx}.0", f"{idx}.end")
+        for idx, (line, tag, number) in enumerate(zip(right_lines, right_tags, right_numbers), 1):
+            prefix = f"{number:>4} " if number is not None else "     "
+            self.diff_right_text.insert("end", prefix + line + "\n")
+            self.diff_right_text.tag_add("line_number", f"{idx}.0", f"{idx}.5")
+            if tag:
+                self.diff_right_text.tag_add(tag, f"{idx}.0", f"{idx}.end")
+        self.diff_left_text.configure(state="disabled")
+        self.diff_right_text.configure(state="disabled")
+
     def _load_editor_content(self) -> None:
         if not self.selected_document_id:
             return
@@ -665,9 +816,13 @@ class DocuGitApp:
             )
             return
         try:
-            diff = self.repository.compare_versions(self.selected_document_id, old_number, new_number)
+            old_version = self.repository.get_version(self.selected_document_id, old_number)
+            new_version = self.repository.get_version(self.selected_document_id, new_number)
+            from docugit.extractors import extract_text
+            old_lines = extract_text(self.repository.version_path(old_version)).splitlines()
+            new_lines = extract_text(self.repository.version_path(new_version)).splitlines()
             self.diff_caption.set(f"CHANGES  /  v{old_number:04d}  →  v{new_number:04d}")
-            self._set_text(self.diff_text, diff or "No text differences between these versions.", diff=True)
+            self._show_side_by_side_diff(old_lines, new_lines)
             self.tabs.select(self.diff_tab)
             self.status_var.set(f"Comparing v{old_number:04d} to v{new_number:04d}")
         except Exception as error:
